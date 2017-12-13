@@ -1,0 +1,63 @@
+﻿Summary about memory management in xv6:
+
+
+
+◙ xv6 uses 32-bit virtual addresses so the virtual address space is 4GB and it uses concept of paging to manage its memory allocations. 
+
+
+◙ The page size in xv6 is 4KB with two level paging structure. The first 10 bits of a 32-bit virtual address are used to index into a 
+  page table directory, which points to a page of the inner page table. The next 10 bits index into the inner page table to locate the 
+  page table entry (PTE). The PTE contains a 20-bit physical frame number and flags.
+
+
+◙ In the virtual address space of every process, the kernel code and data begin from KERNBASE (2GB in the code), and can go up to a size of 
+  PHYSTOP (whose maximum value can be 2GB). This virtual address space of [KERNBASE, KERNBASE+PHYSTOP] is mapped to [0,PHYSTOP] in physical 
+  memory. The kernel is mapped into the address space of every process, and the kernel has a mapping for all usable physical memory as well, 
+  restricting xv6 to using no more than 2GB of physical memory.
+
+
+◙ The kernel uses the struct run data structure to address a free page. This structure simply stores a pointer to the next free page, and 
+  the rest of the page is filled with garbage. That is, the list of free pages are maintained as a linked list, with the pointer to the next 
+  page being stored within the page itself. Pages are added to this list upon initialization, or on freeing them up.
+
+
+◙ Kernel builds page table to map all its address space in the function kvmalloc. This function in turn calls setupkvm to setup the kernel page 
+  table, and switches to it. The address space mappings that are setup by setupkvm can be found in the structure kmap. kmap contains the mappings 
+  for all kernel code, data, and any free memory that the kernel wishes to use, all the way from KERNBASE to KERNBASE+PHYSTOP.
+
+
+◙ The function setupkvm works as for each of the virtual to physical address mappings in kmap, it calls mappages. The function mappages walks 
+  over the entire virtual address space in 4KB page-sized chunks, and for each such logical page, it locates the PTE using the walkpgdir 
+  function. walkpgdir simply outputs the translation that the MMU would do. It uses the first 10 bits to index into the page table directory to 
+  find the inner page table. If the inner page table does not exist, it requests the kernel for a free page, and initializes the inner page table.
+
+
+◙ After the kernel page table kpgdir is setup this way, the kernel switches to this page table by storing its address in the CR3 register in 
+  switchkvm. From this point onwards, the kernel can freely address and use its entire address space from KERNBASE to KERNBASE+PHYSTOP.
+
+
+◙ The kernel now proceeds to do various initializations. It also gathers many more free pages into its free page list using kinit2, given that 
+  it can now address and access a larger piece of memory. At this point, the entire physical memory at the disposal of the kernel [0,PHYSTOP] is 
+  mapped by kpgdir into the virtual address space [KERNBASE, KERNBASE+PHYSTOP], so all memory can be addressed by virtual addresses in the kernel 
+  address space and used for the operation of the system. This memory consists of the kernel code/data that is currently executing on the CPU, and
+  a whole lot of free pages in the kernel’s free page list. Now, the kernel is all set to start user processes, starting with the init process.
+
+
+◙ The function userinit creates the first user process. The kernel page table of this process is created using setupkvm. For the user part of the 
+  memory, the function inituvm allocates one physical page of memory, copies the init executable into that memory, and sets up a page table entry 
+  for the first page of the user virtual address space.
+
+
+◙ All other user processes are created by the fork system call. In fork a child process memory is allocated using complete copy of the parent’s 
+  memory by a call to copyuvm. This function walks through the entire address space of the parent in page-sized chunks, gets the physical address 
+  of every page of the parent using a call to walkpgdir, allocates a new physical page for the child using kalloc, copies the contents of the 
+  parent’s page into the child’s page, adds an entry to the child’s page table using mappages, and returns the child’s page table. If the child 
+  wants to execute a different executable from the parent, it calls exec right after fork. 
+
+
+◙ Exec first reads the ELF header and checks that it is well formed. It then initializes a page table, and sets up the kernel mappings in the new 
+  page table via a call to setupkvm. Then, it proceeds to build the user part of the memory image via calls to allocuvm and loaduvm for each segment
+  of the binary executable. allocuvm allocates physical pages from the kernel’s free pool via calls to kalloc, and sets up page table entries. 
+  loaduvm reads the memory executable from disk into the allotted page using the readi function. 
+
+
